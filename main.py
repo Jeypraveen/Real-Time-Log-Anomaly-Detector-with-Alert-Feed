@@ -233,12 +233,13 @@ class BaselineTracker:
         self.mad = statistics.median([abs(r - self.median) for r in rates])
         self.upper_band = self.median + Z_THRESHOLD * (1.4826 * self.mad + EPSILON)
 
-    def is_anomaly(self, rate: float) -> tuple:
+    def is_anomaly(self, rate: float, window_total: int) -> tuple:
         """
         Returns (is_anomaly: bool, z_score: float).
         Freezes baseline updates whenever z > threshold.
         """
-        if not self._warmed_up or len(self.bucket_history) < 2:
+        # Guard against phantom error rate spikes when traffic drops to zero
+        if not self._warmed_up or len(self.bucket_history) < 2 or window_total < 20:
             return False, 0.0
 
         denominator = 1.4826 * self.mad + EPSILON
@@ -292,7 +293,7 @@ class PatternTracker:
 
     def _normalize_and_hash(self, message: str) -> str:
         """Strip timestamps/numbers, take first 60 chars, MD5 hash."""
-        normalized = PATTERN_STRIP_RE.sub("#", message)[:60]
+        normalized = " ".join(PATTERN_STRIP_RE.sub("#", message).split()[:4])
         return hashlib.md5(normalized.encode()).hexdigest()[:12]
 
     def end_warmup(self):
@@ -622,14 +623,14 @@ class CloudWatchPusher:
             return []
         
         def _fetch():
-            resp = self.client.filter_log_events(
+            resp = self.client.get_log_events(
                 logGroupName=CW_LOG_GROUP,
-                logStreamNames=[CW_LOG_STREAM],
+                logStreamName=CW_LOG_STREAM,
                 limit=limit,
-                interleaved=True,
+                startFromHead=False,
             )
             evs = []
-            for ev in resp.get("events", []):
+            for ev in reversed(resp.get("events", [])):  # Reverse so newest is first in UI
                 try:
                     evs.append(json.loads(ev["message"]))
                 except Exception:
@@ -781,10 +782,10 @@ async def ingestion_loop():
         is_error = entry.level in ("ERROR", "FATAL")
         window.add(entry.timestamp, is_error)
 
-        # Novel pattern detection (only after warm-up)
-        if is_error and baseline.is_warmed_up:
+        # Novel pattern detection
+        if is_error:
             novel_hash = pattern_tracker.check(entry.message)
-            if novel_hash:
+            if novel_hash and baseline.is_warmed_up:
                 alert = Alert(
                     id=f"NP-{uuid.uuid4().hex[:8]}",
                     timestamp=datetime.now().strftime("%H:%M:%S.%f")[:-3],
@@ -821,7 +822,7 @@ async def detection_loop():
             pattern_warmup_ended = True
 
         # ── Anomaly detection ──
-        is_anom, z = baseline.is_anomaly(rate)
+        is_anom, z = baseline.is_anomaly(rate, window.total)
 
         # ── Persistence tracking ──
         persistence = 0.0
@@ -839,6 +840,7 @@ async def detection_loop():
             severity, why = assign_severity(z, persistence, rate, baseline.median)
 
             # ── Incident management ──
+            prev_sev = incident_mgr.active.severity if incident_mgr.active else None
             inc, action = incident_mgr.on_anomaly(z, rate, severity, why)
             inc_data = {
                 "type": "incident",
@@ -854,13 +856,18 @@ async def detection_loop():
                 "raw_breaches": inc.raw_breaches,
             }
             await ws_manager.broadcast(inc_data)
+            
+            # Deduplicate the deque so it doesn't just fill up with one incident updates
+            state.recent_incidents = deque((x for x in state.recent_incidents if x["id"] != inc.id), maxlen=20)
             state.recent_incidents.appendleft(inc_data)
 
-            if action == "opened":
+            SO = IncidentManager.SEV_ORDER
+            if action == "opened" or (prev_sev and SO.get(inc.severity, 0) > SO.get(prev_sev, 0)):
                 await cw_pusher.push({
-                    "type": "incident_open", "incident_id": inc.id,
+                    "type": "incident_open" if action == "opened" else "incident_escalate",
+                    "incident_id": inc.id,
                     "timestamp": datetime.now().isoformat(),
-                    "severity": severity, "z_score": round(z, 2),
+                    "severity": inc.severity, "z_score": round(z, 2),
                     "rate": round(rate, 4),
                     "baseline_median": round(baseline.median, 4),
                     "upper_band": round(baseline.upper_band, 4),
