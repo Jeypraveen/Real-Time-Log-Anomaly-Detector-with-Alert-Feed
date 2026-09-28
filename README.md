@@ -28,7 +28,7 @@ Most log anomaly detectors fall into two traps:
 ## ✅ Minimum Requirements Checklist
 
 1. **Monitor an active log file**: ✅ `tail_log_file()` handles appending, truncation (rotation), and waiting for file creation asynchronously.
-2. **Sliding window error rates**: ✅ `SlidingWindow` precisely tracks events over a configurable rolling window (default 60s).
+2. **Sliding window error rates**: ✅ `SlidingWindow` precisely tracks events over a configurable rolling window (default 20s to minimize recovery lag).
 3. **Calculate a baseline and z-score**: ✅ `BaselineTracker` waits for a warm-up period, computing Median and Median Absolute Deviation (MAD). **Crucially, baseline updates FREEZE when `z > threshold`**.
 4. **Detection Loop**: ✅ Runs concurrently at 1Hz, evaluating the window against the frozen baseline.
 5. **Severity Rubric**: ✅ Strict mapping: `z 3.5 to <5` = LOW; `5 to <8` = MEDIUM; `8 to <12` = HIGH; `>=12 OR >=30s` = CRITICAL. Novel patterns are MEDIUM.
@@ -67,7 +67,7 @@ You need 3 terminal windows to run the full simulation.
 ### 1. Start the AWS Emulator (Terminal 1)
 ```bash
 pip install -r requirements.txt
-moto_server -p 4566
+python -m moto.server -p 4566
 ```
 
 ### 2. Start the RedDragon Detector (Terminal 2)
@@ -94,3 +94,9 @@ python gen_logs.py new_error
 ### 4. Verify in AWS Console
 1. Click the **"Refresh"** button on the CloudWatch panel in the dashboard to prove the incidents and novel pattern alerts were successfully stored in AWS.
 2. Log into the AWS Console and navigate to **CloudWatch -> Log groups -> `/reddragon/anomalies` -> `alerts`**. You will see the structured JSON alerts appear there (note: the AWS console can take 10 to 30 seconds to index new events).
+
+---
+
+## 💡 Known Limitations
+1. **Window Lag**: Anomaly detection uses a rolling window (currently tuned to 20s). This means that after a traffic spike subsides, there is an inherent lag of up to 20 seconds before the system fully calculates a recovery and closes the incident. 
+2. **Moto vs. Real CloudWatch**: For local CI/CD testing, we demonstrate pushes to `moto`. Please note that `moto` is a local emulator and does not enforce real CloudWatch quotas, IAM policies, or ingestion/indexing delays.
