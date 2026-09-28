@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RedDragon — Real-Time Anomaly Detection</title>
+  <meta name="description" content="Real-time log anomaly detection dashboard with incident grouping and novel pattern detection">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0f172a;
+      --card:      #1e293b;
+      --card-border: #334155;
+      --accent:    #38bdf8;
+      --text:      #e2e8f0;
+      --text-dim:  #94a3b8;
+      --text-bright: #f8fafc;
+      --green:     #22c55e;
+      --yellow:    #facc15;
+      --orange:    #fb923c;
+      --red:       #ef4444;
+      --red-dark:  #dc2626;
+    }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 28px;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border-bottom: 1px solid var(--card-border);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .header-left h1 { font-size: 1.7rem; font-weight: 800; color: var(--text-bright); }
+    .subtitle { color: var(--text-dim); font-size: 0.85rem; font-weight: 500; }
+    .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ── Badges ────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 12px; border-radius: 20px;
+      font-size: 0.75rem; font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-ok   { background: rgba(34,197,94,.15); color: var(--green); }
+    .badge-err  { background: rgba(239,68,68,.15); color: var(--red); }
+    .badge-warn { background: rgba(251,146,60,.15); color: var(--orange); }
+    .badge-info { background: rgba(56,189,248,.12); color: var(--accent); }
+    .badge-sev  {
+      padding: 5px 16px; font-size: 0.95rem; font-weight: 700;
+      border-radius: 8px; color: #fff; text-transform: uppercase;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+    .badge-pulse { animation: pulse 1.2s ease-in-out infinite; }
+
+    /* ── Layout ────────────────────────────────────────────────────── */
+    main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 40px; }
+    section { margin-bottom: 20px; }
+    h2 {
+      font-size: 1.1rem; font-weight: 700; color: var(--text-bright);
+      margin-bottom: 10px; letter-spacing: .02em;
+    }
+
+    /* ── Chart ─────────────────────────────────────────────────────── */
+    .chart-wrap {
+      background: var(--card); border: 1px solid var(--card-border);
+      border-radius: 12px; padding: 18px 18px 10px;
+    }
+    .chart-container { position: relative; height: 260px; }
+    .baseline-info {
+      margin-top: 8px; font-size: 0.72rem; color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .baseline-info em { color: var(--orange); }
+
+    /* ── Metrics Bar ──────────────────────────────────────────────── */
+    .metrics-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .metric-card {
+      background: var(--card); border: 1px solid var(--card-border);
+      border-radius: 10px; padding: 14px; text-align: center;
+    }
+    .metric-label { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
+    .metric-value { font-size: 1.5rem; font-weight: 700; color: var(--text-bright); display: block; margin-top: 2px; }
+    .metric-value.anomaly { color: var(--red); }
+
+    /* ── Health Strip ─────────────────────────────────────────────── */
+    .health-strip {
+      display: flex; flex-wrap: wrap; gap: 8px 20px;
+      padding: 10px 16px;
+      background: var(--card); border: 1px solid var(--card-border);
+      border-radius: 10px; font-size: 0.78rem; color: var(--text-dim);
+    }
+    .health-strip strong { color: var(--text); }
+    .noise-stat { color: var(--accent); font-weight: 600; }
+
+    /* ── CloudWatch Panel ─────────────────────────────────────────── */
+    .cw-panel {
+      background: var(--card); border: 1px solid var(--card-border);
+      border-radius: 10px; padding: 14px 16px;
+    }
+    .cw-panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px;
+    }
+    .cw-events {
+      max-height: 180px; overflow-y: auto;
+      font-size: 0.72rem; color: var(--text-dim);
+      font-family: 'Courier New', monospace;
+    }
+    .cw-events pre {
+      background: var(--bg); border-radius: 6px; padding: 8px;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .cw-btn {
+      background: rgba(56,189,248,.15); color: var(--accent);
+      border: 1px solid rgba(56,189,248,.3); border-radius: 6px;
+      padding: 4px 12px; font-size: 0.72rem; cursor: pointer;
+      font-weight: 600;
+    }
+    .cw-btn:hover { background: rgba(56,189,248,.25); }
+
+    /* ── Feed (Incidents & Alerts) ────────────────────────────────── */
+    .feed-empty {
+      text-align: center; padding: 30px; color: var(--text-dim);
+      font-size: 0.85rem; font-style: italic;
+    }
+    .feed-card {
+      background: var(--card); border: 1px solid var(--card-border);
+      border-left: 4px solid var(--text-dim);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+      transition: border-color .3s, box-shadow .3s;
+    }
+    .feed-card.new-card {
+      box-shadow: 0 0 16px rgba(56,189,248,.2);
+    }
+    .feed-card.closed-card { opacity: 0.6; }
+    .card-header {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.85rem; flex-wrap: wrap;
+    }
+    .sev-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .status-badge {
+      font-size: 0.65rem; padding: 2px 8px; border-radius: 4px; font-weight: 700;
+    }
+    .status-active { background: rgba(239,68,68,.2); color: var(--red); }
+    .status-closed { background: rgba(34,197,94,.2); color: var(--green); }
+    .card-time { margin-left: auto; color: var(--text-dim); font-size: 0.75rem; }
+    .card-why {
+      margin-top: 6px; font-size: 0.8rem; color: var(--text);
+      font-weight: 500; line-height: 1.5;
+    }
+    .card-stats {
+      margin-top: 6px; font-size: 0.72rem; color: var(--text-dim);
+    }
+
+    /* ── Detection Timeline ──────────────────────────────────────── */
+    .timeline-strip {
+      display: flex; height: 22px; border-radius: 6px; overflow: hidden;
+      background: rgba(15,23,42,.5); border: 1px solid var(--card-border);
+    }
+    .timeline-tick {
+      flex: 0 0 3px; height: 100%;
+      transition: background-color .2s;
+    }
+
+    /* ── Scrollbar ────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ════ Header ════ -->
+<header>
+  <div class="header-left">
+    <h1 style="display:flex; align-items:center; gap: 12px;">
+      <img src="/static/logo.jpg" alt="RedDragon Logo" style="width: 42px; height: 42px; border-radius: 50%; border: 2px solid var(--red); box-shadow: 0 0 10px rgba(239,68,68,0.5);">
+      <span><span style="color: #ef4444; text-shadow: 0 0 10px rgba(239,68,68,0.5);">Red</span>Dragon</span>
+    </h1>
+    <span class="subtitle">Real-Time Anomaly Detection</span>
+  </div>
+  <div class="header-right">
+    <span id="severity-badge" class="badge badge-sev" style="display:none"></span>
+    <span id="frozen-badge" class="badge badge-warn" style="display:none">🔒 Baseline Frozen</span>
+    <span id="warmup-badge" class="badge badge-info">⏳ Waiting for data…</span>
+    <span id="cw-badge" class="badge badge-info">☁️ CloudWatch …</span>
+    <span id="ws-badge" class="badge badge-err">⚪ Connecting…</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ════ Chart ════ -->
+  <section>
+    <div class="chart-wrap">
+      <div class="chart-container">
+        <canvas id="rateChart"></canvas>
+      </div>
+      <div id="baseline-info" class="baseline-info">
+        Baseline not yet established — warming up…
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ Metrics ════ -->
+  <section>
+    <div class="metrics-bar">
+      <div class="metric-card">
+        <span class="metric-label">Error Rate</span>
+        <span id="m-rate" class="metric-value">–</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Baseline</span>
+        <span id="m-baseline" class="metric-value">–</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Upper Band</span>
+        <span id="m-band" class="metric-value">–</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Z-Score</span>
+        <span id="m-z" class="metric-value">0.0</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ Health Strip ════ -->
+  <section>
+    <div class="health-strip">
+      <span>📊 Lines: <strong id="h-lines">0</strong></span>
+      <span>⚠️ Malformed: <strong id="h-malformed">0</strong></span>
+      <span>☁️ Pushes: <strong id="h-aws-ok">0</strong>✅ <strong id="h-aws-fail">0</strong>❌</span>
+      <span id="h-noise" style="display:none" class="noise-stat"></span>
+    </div>
+  </section>
+
+  <!-- ════ CloudWatch Proof Panel ════ -->
+  <section>
+    <div class="cw-panel">
+      <div class="cw-panel-header">
+        <h2 style="margin:0">☁️ CloudWatch Logs (Req 8 Proof)</h2>
+        <button id="cw-refresh" class="cw-btn" onclick="fetchCloudWatch()">Refresh</button>
+      </div>
+      <div id="cw-target" style="font-size:.72rem;color:var(--text-dim);margin-bottom:6px;"></div>
+      <div id="cw-events" class="cw-events">
+        <pre>Click "Refresh" to fetch stored alerts from CloudWatch Logs.</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════ Incidents & Alerts Feed ════ -->
+  <section>
+    <h2>Incidents & Alerts</h2>
+    <div id="feed-list"></div>
+    <div id="feed-empty" class="feed-empty">No anomalies detected yet. System is monitoring…</div>
+  </section>
+
+  <!-- ════ Detection Timeline ════ -->
+  <section>
+    <h2>Detection Timeline</h2>
+    <div id="timeline-strip" class="timeline-strip"></div>
+  </section>
+
+</main>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════
+//  Constants
+// ════════════════════════════════════════════════════════════════════════
+const MAX_PTS = 180; // 3 minutes of data
+const SEV_COLORS = {
+  LOW:      '#facc15',
+  MEDIUM:   '#fb923c',
+  HIGH:     '#ef4444',
+  CRITICAL: '#dc2626',
+};
+
+// ════════════════════════════════════════════════════════════════════════
+//  State
+// ════════════════════════════════════════════════════════════════════════
+let ws = null;
+let chart = null;
+const labels   = [];
+const rateData = [];
+const bandData = [];
+const medData  = [];
+let cwTarget = '';
+
+// ════════════════════════════════════════════════════════════════════════
+//  Chart.js setup
+// ════════════════════════════════════════════════════════════════════════
+function initChart() {
+  const ctx = document.getElementById('rateChart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Error Rate (%)',
+          data: rateData,
+          borderColor: '#38bdf8',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2.5,
+          segment: {
+            borderColor: function(ctx) {
+              const v = ctx.p1.parsed.y;
+              const b = bandData[ctx.p1DataIndex];
+              return (b !== undefined && b > 0 && v > b) ? '#ef4444' : '#38bdf8';
+            }
+          }
+        },
+        {
+          label: 'Upper Band (%)',
+          data: bandData,
+          borderColor: 'rgba(34,197,94,0.5)',
+          borderDash: [6, 4],
+          fill: 'origin',
+          backgroundColor: 'rgba(34,197,94,0.06)',
+          tension: 0,
+          pointRadius: 0,
+          borderWidth: 1.5,
+        },
+        {
+          label: 'Baseline (%)',
+          data: medData,
+          borderColor: 'rgba(34,197,94,0.3)',
+          borderDash: [2, 4],
+          fill: false,
+          tension: 0,
+          pointRadius: 0,
+          borderWidth: 1,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: {
+          display: true,
+          ticks: { color: '#64748b', maxTicksLimit: 10, font: { size: 11 } },
+          grid:  { color: 'rgba(100,116,139,0.08)' },
+        },
+        y: {
+          display: true,
+          beginAtZero: true,
+          title: { display: true, text: 'Error Rate (%)', color: '#94a3b8', font: { size: 12 } },
+          ticks: { color: '#64748b', font: { size: 11 } },
+          grid:  { color: 'rgba(100,116,139,0.08)' },
+        }
+      },
+      plugins: {
+        legend: { display: true, labels: { color: '#94a3b8', font: { size: 11 } } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      interaction: { mode: 'index', intersect: false },
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  WebSocket (auto-reconnect every 2s)
+// ════════════════════════════════════════════════════════════════════════
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    const b = document.getElementById('ws-badge');
+    b.textContent = '🟢 Connected';
+    b.className = 'badge badge-ok';
+  };
+
+  ws.onclose = () => {
+    const b = document.getElementById('ws-badge');
+    b.textContent = '🔴 Disconnected';
+    b.className = 'badge badge-err';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {};
+
+  ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if      (d.type === 'metrics')  handleMetrics(d);
+    else if (d.type === 'incident') handleIncident(d);
+    else if (d.type === 'alert')    handleAlert(d);
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Metrics handler
+// ════════════════════════════════════════════════════════════════════════
+function handleMetrics(d) {
+  // ── Chart data ──
+  labels.push(d.timestamp);
+  rateData.push(+(d.rate * 100).toFixed(2));
+  bandData.push(+(d.upper_band * 100).toFixed(2));
+  medData.push(+(d.baseline_median * 100).toFixed(2));
+  while (labels.length > MAX_PTS) { labels.shift(); rateData.shift(); bandData.shift(); medData.shift(); }
+  chart.update('none');
+
+  // ── Metric cards ──
+  const rateEl = document.getElementById('m-rate');
+  rateEl.textContent = (d.rate * 100).toFixed(1) + '%';
+  rateEl.className = d.is_anomaly ? 'metric-value anomaly' : 'metric-value';
+
+  document.getElementById('m-baseline').textContent =
+    d.is_warmed_up ? (d.baseline_median * 100).toFixed(1) + '%' : '–';
+  document.getElementById('m-band').textContent =
+    d.is_warmed_up ? (d.upper_band * 100).toFixed(1) + '%' : '–';
+
+  const zEl = document.getElementById('m-z');
+  zEl.textContent = d.z_score.toFixed(1);
+  zEl.className = d.is_anomaly ? 'metric-value anomaly' : 'metric-value';
+
+  // ── Warm-up badge ──
+  const wb = document.getElementById('warmup-badge');
+  if (!d.is_warmed_up) {
+    if (d.warmup_elapsed > 0)
+      wb.textContent = `⏳ Warm-up: ${d.warmup_elapsed}/${d.warmup_total}s`;
+    else
+      wb.textContent = '⏳ Waiting for data…';
+    wb.style.display = '';
+  } else {
+    wb.style.display = 'none';
+  }
+
+  // ── Severity badge ──
+  const sb = document.getElementById('severity-badge');
+  if (d.is_anomaly && d.severity) {
+    sb.textContent = d.severity;
+    sb.style.background = SEV_COLORS[d.severity] || '#64748b';
+    sb.style.display = '';
+    sb.className = d.severity === 'CRITICAL' ? 'badge badge-sev badge-pulse' : 'badge badge-sev';
+  } else {
+    sb.style.display = 'none';
+  }
+
+  // ── Frozen badge ──
+  document.getElementById('frozen-badge').style.display = d.baseline_frozen ? '' : 'none';
+
+  // ── CloudWatch badge ──
+  const cb = document.getElementById('cw-badge');
+  if (d.cw_connected) {
+    cb.textContent = d.cw_using_emulator ? '☁️ AWS-compatible emulator (moto)' : '☁️ ' + d.cw_target;
+    cb.className = 'badge badge-ok';
+  } else {
+    cb.textContent = '☁️ Offline';
+    cb.className = 'badge badge-err';
+  }
+  cwTarget = d.cw_target || '';
+
+  // ── Health strip ──
+  document.getElementById('h-lines').textContent = d.lines_processed.toLocaleString();
+  document.getElementById('h-malformed').textContent = d.malformed_lines;
+  document.getElementById('h-aws-ok').textContent = d.aws_pushes_ok;
+  document.getElementById('h-aws-fail').textContent = d.aws_pushes_failed;
+
+  // ── Noise reduction counter ──
+  const noise = document.getElementById('h-noise');
+  if (d.raw_breaches > 0 && d.incidents_total > 0) {
+    const pct = Math.round((1 - d.incidents_total / d.raw_breaches) * 100);
+    noise.textContent = `🔇 ${d.raw_breaches} breaches → ${d.incidents_total} incident${d.incidents_total > 1 ? 's' : ''} (${pct}% noise reduction)`;
+    noise.style.display = '';
+  }
+
+  // ── Baseline info ──
+  const bi = document.getElementById('baseline-info');
+  if (d.is_warmed_up) {
+    bi.innerHTML =
+      `Baseline: median ${(d.baseline_median*100).toFixed(1)}%, ` +
+      `upper bound ${(d.upper_band*100).toFixed(1)}% ` +
+      `(median + ${3.5} × 1.4826 × MAD + ε). ` +
+      `Computed from last 10 min of ${10}s buckets.` +
+      (d.baseline_frozen ? ' <em>🔒 Frozen during active anomaly</em>' : '');
+  } else {
+    bi.textContent = d.warmup_elapsed > 0
+      ? `Warming up… ${d.warmup_elapsed}/${d.warmup_total}s`
+      : 'Baseline not yet established — waiting for log data…';
+  }
+
+  // ── Timeline tick ──
+  if (d.timeline) {
+    const strip = document.getElementById('timeline-strip');
+    const tick = document.createElement('div');
+    tick.className = 'timeline-tick';
+    tick.style.backgroundColor =
+      d.timeline.state === 'anomaly' && d.timeline.severity
+        ? (SEV_COLORS[d.timeline.severity] || '#64748b')
+        : '#22c55e';
+    strip.appendChild(tick);
+    while (strip.children.length > 300) strip.removeChild(strip.firstChild);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Incident handler — one updating card per incident
+// ════════════════════════════════════════════════════════════════════════
+function handleIncident(d) {
+  document.getElementById('feed-empty').style.display = 'none';
+  let card = document.getElementById('inc-' + d.id);
+  const isNew = !card;
+
+  if (isNew) {
+    card = document.createElement('div');
+    card.id = 'inc-' + d.id;
+    card.className = 'feed-card new-card';
+    document.getElementById('feed-list').prepend(card);
+    setTimeout(() => card.classList.remove('new-card'), 2000);
+  }
+
+  const color = SEV_COLORS[d.severity] || '#64748b';
+  const statusHtml = d.status === 'closed'
+    ? '<span class="status-badge status-closed">CLOSED</span>'
+    : '<span class="status-badge status-active">ACTIVE</span>';
+
+  card.style.borderLeftColor = color;
+  if (d.status === 'closed') card.classList.add('closed-card');
+
+  card.innerHTML = `
+    <div class="card-header">
+      <span class="sev-dot" style="background:${color}"></span>
+      <strong>${d.id}</strong> <strong style="color:${color}">${d.severity}</strong>
+      ${statusHtml}
+      <span class="card-time">${d.start_timestamp}</span>
+    </div>
+    <div class="card-why">${escHtml(d.why)}</div>
+    <div class="card-stats">
+      Peak z: ${d.peak_z} · Duration: ${d.duration_secs}s ·
+      Rate: ${(d.current_rate * 100).toFixed(1)}% ·
+      Breaches: ${d.raw_breaches}
+    </div>
+  `;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Novel pattern alert handler
+// ════════════════════════════════════════════════════════════════════════
+function handleAlert(d) {
+  document.getElementById('feed-empty').style.display = 'none';
+  const card = document.createElement('div');
+  card.className = 'feed-card new-card';
+  const color = SEV_COLORS[d.severity] || '#64748b';
+  card.style.borderLeftColor = color;
+  card.innerHTML = `
+    <div class="card-header">
+      <span class="sev-dot" style="background:${color}"></span>
+      <strong style="color:${color}">${d.severity}</strong> Novel Pattern
+      <span class="card-time">${d.timestamp}</span>
+    </div>
+    <div class="card-why">${escHtml(d.why)}</div>
+  `;
+  document.getElementById('feed-list').prepend(card);
+  setTimeout(() => card.classList.remove('new-card'), 2000);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  CloudWatch proof — fetch /api/cloudwatch
+// ════════════════════════════════════════════════════════════════════════
+async function fetchCloudWatch() {
+  const el = document.getElementById('cw-events');
+  const tgt = document.getElementById('cw-target');
+  try {
+    const res = await fetch('/api/cloudwatch');
+    const data = await res.json();
+    tgt.textContent = `Target: ${data.source} · Group: ${data.log_group} · Stream: ${data.log_stream} · Events: ${data.event_count}`;
+    if (data.events.length === 0) {
+      el.innerHTML = '<pre>No events stored yet. Generate some traffic and trigger an anomaly first.</pre>';
+    } else {
+      el.innerHTML = data.events.map(e =>
+        `<pre>${escHtml(JSON.stringify(e, null, 2))}</pre>`
+      ).join('');
+    }
+  } catch (err) {
+    el.innerHTML = `<pre>Error fetching CloudWatch events: ${err.message}</pre>`;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Utility
+// ════════════════════════════════════════════════════════════════════════
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Init
+// ════════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  initChart();
+  connect();
+});
+</script>
+</body>
+</html>
