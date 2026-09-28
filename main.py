@@ -52,7 +52,7 @@ WARMUP_SECONDS      = int(os.getenv("WARMUP_SECONDS", "30"))
 Z_THRESHOLD         = float(os.getenv("Z_THRESHOLD", "3.5"))
 EPSILON             = float(os.getenv("EPSILON", "0.01"))
 MIN_ABS_CHANGE      = float(os.getenv("MIN_ABS_CHANGE", "0.05"))
-WINDOW_SECONDS      = int(os.getenv("WINDOW_SECONDS", "60"))
+WINDOW_SECONDS      = int(os.getenv("WINDOW_SECONDS", "20"))
 BUCKET_SECONDS      = int(os.getenv("BUCKET_SECONDS", "10"))
 INCIDENT_CLOSE_SECS = int(os.getenv("INCIDENT_CLOSE_SECONDS", "15"))
 
